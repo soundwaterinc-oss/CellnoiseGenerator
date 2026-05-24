@@ -9,6 +9,10 @@ import { ScanEngine } from "./geometry/scan-engine.js?v=20260524-cellnoise-03";
 import { extractFeatures } from "./geometry/feature-extractor.js?v=20260524-cellnoise-02";
 import { bindRange, bindSelect, bindButtonGroup, bindButton, bindFileInput } from "./ui/bindings.js?v=20260524-cellnoise-02";
 
+if (typeof window.registerElSystemaInstrument !== "function") {
+  window.registerElSystemaInstrument = function () {};
+}
+
 const SOURCE_PRESETS = [
   { label: "cell2.vector.svg", url: "./assets/cell2.vector.svg" },
   { label: "cells_lithocyst_001.svg", url: "./assets/cells_lithocyst_001.svg" },
@@ -19,6 +23,16 @@ const SCAN_LABELS = ["A", "B", "C"];
 const DEFAULT_PRESET = SOURCE_PRESETS[0].url;
 const MAX_RENDER_FPS = 30;
 const MAX_CANVAS_DPR = 1.25;
+const PARAM_ALIASES = {
+  master: "masterGain",
+  root: "pitchBase",
+  rootHz: "pitchBase",
+  rate: "pulseRate",
+  density: "burstDensity",
+  brightness: "noiseBandFreq",
+  resonance: "noiseQ",
+  color: "noiseColor",
+};
 
 const elements = {
   startAudioButton: document.querySelector("#startAudioButton"),
@@ -92,6 +106,8 @@ const state = {
   rafId: 0,
   lastStamp: 0,
   lastRenderStamp: 0,
+  elSystemaRegistered: false,
+  relayRamps: {},
   controls: null,
   presetButtons: [],
 };
@@ -210,6 +226,7 @@ initialize().catch(reportError);
 
 async function initialize() {
   ensureSource();
+  buildAudioGraph();
   resizeCanvas();
   renderUI(true);
   await loadPreset(DEFAULT_PRESET, { quiet: true });
@@ -252,6 +269,7 @@ function buildAudioGraph() {
 
   refreshScansFromSource();
   applyControls();
+  ensureElSystemaRegistration();
 }
 
 async function startAudio() {
@@ -632,4 +650,150 @@ function formatHz(value) {
 function reportError(error) {
   console.error(error);
   setStatus("Error");
+}
+
+function resolveParamName(name) {
+  if (!name) return "";
+  return PARAM_ALIASES[name] || name;
+}
+
+function findParamElement(name) {
+  const resolved = resolveParamName(name);
+  return document.getElementById(resolved) || document.querySelector(`[name="${resolved}"]`);
+}
+
+function dispatchControlEvent(el) {
+  const eventName = el.tagName === "SELECT" ? "change" : "input";
+  el.dispatchEvent(new Event(eventName, { bubbles: true }));
+  if (eventName !== "change") {
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+}
+
+function setControlValue(name, value) {
+  if (name === "sourcePreset") {
+    const preset = SOURCE_PRESETS.find((entry) => entry.label === value || entry.url === value);
+    if (preset) {
+      void loadPreset(preset.url);
+      return true;
+    }
+    return false;
+  }
+
+  const el = findParamElement(name);
+  if (!el) return false;
+
+  if (el.tagName === "SELECT") {
+    const next = String(value);
+    const hasOption = Array.from(el.options).some((option) => option.value === next);
+    if (!hasOption) return false;
+    el.value = next;
+    dispatchControlEvent(el);
+    return true;
+  }
+
+  if (el.type === "range" || el.type === "number") {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return false;
+    const min = el.min === "" ? -Infinity : Number(el.min);
+    const max = el.max === "" ? Infinity : Number(el.max);
+    const clamped = Math.min(max, Math.max(min, numeric));
+    el.value = String(clamped);
+    dispatchControlEvent(el);
+    return true;
+  }
+
+  if (el.type === "checkbox") {
+    el.checked = !!value;
+    dispatchControlEvent(el);
+    return true;
+  }
+
+  el.value = String(value);
+  dispatchControlEvent(el);
+  return true;
+}
+
+function rampControlValue(name, from, to, durationMs) {
+  if (state.relayRamps[name]) {
+    cancelAnimationFrame(state.relayRamps[name]);
+    delete state.relayRamps[name];
+  }
+  if (!(durationMs > 0)) {
+    setControlValue(name, to);
+    return;
+  }
+  const startAt = performance.now();
+  const step = () => {
+    const elapsed = performance.now() - startAt;
+    const k = Math.min(1, elapsed / durationMs);
+    const current = from + (to - from) * k;
+    setControlValue(name, current);
+    if (k >= 1) {
+      delete state.relayRamps[name];
+      return;
+    }
+    state.relayRamps[name] = requestAnimationFrame(step);
+  };
+  state.relayRamps[name] = requestAnimationFrame(step);
+}
+
+function applyPresetObject(preset) {
+  if (!preset || typeof preset !== "object") return;
+  Object.entries(preset).forEach(([name, value]) => {
+    try {
+      setControlValue(name, value);
+    } catch (_) {}
+  });
+}
+
+function getSnapshot() {
+  const controls = state.controls || readControls();
+  return {
+    sourceLabel: state.source?.sourceLabel || "",
+    audioState: state.audioContext?.state || "uninitialized",
+    running: !!state.running,
+    scanSpeed: controls.scanSpeed,
+    scanAngle: Number(elements.scanAngle.value),
+    pitchBase: controls.pitchBase,
+    sineMix: controls.sineMix,
+    pulseMix: controls.pulseMix,
+    noiseMix: controls.noiseMix,
+    masterGain: controls.masterGain,
+    clickGain: controls.clickGain,
+    pulseRate: controls.pulseRate,
+    pulseWidth: controls.pulseWidth,
+    burstDensity: controls.burstDensity,
+    noiseGain: controls.noiseGain,
+    noiseBandFreq: controls.noiseBandFreq,
+    noiseQ: controls.noiseQ,
+    noiseColor: controls.noiseColor,
+    bitDepth: controls.bitDepth,
+    sampleRateReduction: controls.sampleRateReduction,
+    clipAmount: controls.clipAmount,
+  };
+}
+
+function ensureElSystemaRegistration() {
+  if (state.elSystemaRegistered || !state.audioContext || !state.masterGraph) return;
+  window.__cellnoise_setParam = setControlValue;
+  window.registerElSystemaInstrument({
+    id: "cell-noise",
+    audioContext: state.audioContext,
+    outputNode: state.masterGraph.masterGain,
+    sharedAnalyser: state.masterGraph.analyser,
+    play: () => startAll(),
+    stop: () => stopAll(),
+    setParam: (name, value) => {
+      setControlValue(name, value);
+    },
+    ramp: (name, from, to, durationMs) => {
+      rampControlValue(name, Number(from), Number(to), Number(durationMs));
+    },
+    loadPreset: (preset) => {
+      applyPresetObject(preset);
+    },
+    snapshot: () => getSnapshot(),
+  });
+  state.elSystemaRegistered = true;
 }
