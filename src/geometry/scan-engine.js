@@ -1,4 +1,4 @@
-const SAMPLES = 256;
+const SAMPLES = 160;
 
 /**
  * Segment-based scan: instead of a global linear sweep, the scan head walks a

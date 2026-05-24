@@ -5,7 +5,7 @@ import { PulseEngine } from "./audio/pulse-engine.js?v=20260524-cellnoise-02";
 import { NoiseEngine } from "./audio/noise-engine.js?v=20260524-cellnoise-02";
 import { Degradation } from "./audio/degradation.js?v=20260524-cellnoise-02";
 import { PatternSource } from "./geometry/pattern-source.js?v=20260524-cellnoise-02";
-import { ScanEngine } from "./geometry/scan-engine.js?v=20260524-cellnoise-02";
+import { ScanEngine } from "./geometry/scan-engine.js?v=20260524-cellnoise-03";
 import { extractFeatures } from "./geometry/feature-extractor.js?v=20260524-cellnoise-02";
 import { bindRange, bindSelect, bindButtonGroup, bindButton, bindFileInput } from "./ui/bindings.js?v=20260524-cellnoise-02";
 
@@ -17,6 +17,8 @@ const SOURCE_PRESETS = [
 const SCAN_COLORS = ["0, 255, 136", "255, 80, 180", "80, 200, 255"];
 const SCAN_LABELS = ["A", "B", "C"];
 const DEFAULT_PRESET = SOURCE_PRESETS[0].url;
+const MAX_RENDER_FPS = 30;
+const MAX_CANVAS_DPR = 1.25;
 
 const elements = {
   startAudioButton: document.querySelector("#startAudioButton"),
@@ -89,6 +91,7 @@ const state = {
   running: false,
   rafId: 0,
   lastStamp: 0,
+  lastRenderStamp: 0,
   controls: null,
   presetButtons: [],
 };
@@ -285,6 +288,7 @@ function startLoop() {
   if (state.running) return;
   state.running = true;
   state.lastStamp = performance.now();
+  state.lastRenderStamp = 0;
   for (const scan of state.scans) {
     scan.advance(0);
   }
@@ -293,7 +297,10 @@ function startLoop() {
     const dt = Math.min(0.05, (stamp - state.lastStamp) / 1000 || 0.016);
     state.lastStamp = stamp;
     stepScans(dt);
-    renderFrame();
+    if (stamp - state.lastRenderStamp >= 1000 / MAX_RENDER_FPS) {
+      renderFrame();
+      state.lastRenderStamp = stamp;
+    }
     state.rafId = requestAnimationFrame(frame);
   };
   state.rafId = requestAnimationFrame(frame);
@@ -593,7 +600,7 @@ function drawOverlayGrid(ctx, width, height) {
 
 function resizeCanvas() {
   const canvas = elements.scanCanvas;
-  const dpr = Math.max(1, window.devicePixelRatio || 1);
+  const dpr = Math.min(MAX_CANVAS_DPR, Math.max(1, window.devicePixelRatio || 1));
   const rect = canvas.getBoundingClientRect();
   const width = Math.max(1, Math.round(rect.width * dpr));
   const height = Math.max(1, Math.round(rect.height * dpr));
