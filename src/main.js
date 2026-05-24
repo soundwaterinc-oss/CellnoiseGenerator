@@ -782,8 +782,12 @@ function ensureElSystemaRegistration() {
     audioContext: state.audioContext,
     outputNode: state.masterGraph.masterGain,
     sharedAnalyser: state.masterGraph.analyser,
-    play: () => startAll(),
-    stop: () => stopAll(),
+    play: () => {
+      void startAll().catch(reportError);
+    },
+    stop: () => {
+      void stopAll().catch(reportError);
+    },
     setParam: (name, value) => {
       setControlValue(name, value);
     },
