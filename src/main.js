@@ -9,6 +9,8 @@ import { ScanEngine } from "./geometry/scan-engine.js?v=20260524-cellnoise-03";
 import { extractFeatures } from "./geometry/feature-extractor.js?v=20260524-cellnoise-02";
 import { bindRange, bindSelect, bindButtonGroup, bindButton, bindFileInput } from "./ui/bindings.js?v=20260524-cellnoise-02";
 
+const FIELD_ON = /[?&#]field/.test(location.href);
+
 if (typeof window.registerElSystemaInstrument !== "function") {
   window.registerElSystemaInstrument = function () {};
 }
@@ -774,11 +776,32 @@ function getSnapshot() {
   };
 }
 
+function elsysMacro(name, value) {
+  const v = Math.max(0, Math.min(1, Number(value) || 0));
+  if (name === "macro.a") {
+    setControlValue("pulseRate", 0.2 + 17.8 * v);
+    setControlValue("burstDensity", v);
+    setControlValue("noiseGain", v);
+  } else if (name === "macro.b") {
+    setControlValue("noiseBandFreq", 100 + 7900 * v);
+    setControlValue("noiseQ", 0.2 + 17.8 * v);
+    setControlValue("clipAmount", v);
+    setControlValue("sampleRateReduction", 1 + 23 * v);
+  } else if (name === "macro.c") {
+    setControlValue("scanAngle", 360 * v);
+    setControlValue("scanSpeed", 0.1 + 2.1 * v);
+  } else if (name === "volume") {
+    setControlValue("masterGain", v * v);
+  } else {
+    setControlValue(name, value);
+  }
+}
+
 function ensureElSystemaRegistration() {
-  if (state.elSystemaRegistered || !state.audioContext || !state.masterGraph) return;
+  if (!FIELD_ON || state.elSystemaRegistered || !state.audioContext || !state.masterGraph) return;
   window.__cellnoise_setParam = setControlValue;
   window.registerElSystemaInstrument({
-    id: "cell-noise",
+    id: "cellnoise",
     audioContext: state.audioContext,
     outputNode: state.masterGraph.masterGain,
     sharedAnalyser: state.masterGraph.analyser,
@@ -789,7 +812,7 @@ function ensureElSystemaRegistration() {
       void stopAll().catch(reportError);
     },
     setParam: (name, value) => {
-      setControlValue(name, value);
+      elsysMacro(name, value);
     },
     ramp: (name, from, to, durationMs) => {
       rampControlValue(name, Number(from), Number(to), Number(durationMs));
